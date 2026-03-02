@@ -1,6 +1,6 @@
 """
 app/main.py
-IT Operations Intelligence Platform - Streamlit Dashboard
+IT Operations Intelligence Platform — Streamlit Dashboard
 Tabs: Overview Dashboard | AI Incident Insights | Natural Language Q&A
 """
 
@@ -10,19 +10,38 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from google.cloud import bigquery
+from google.oauth2 import service_account
 from dotenv import load_dotenv
 import google.generativeai as genai
 
 load_dotenv()
 
-# --- Config ---
-PROJECT_ID = os.getenv("GCP_PROJECT_ID")
-DATASET_ID = os.getenv("BQ_DATASET", "it_ops")
-TABLE_ID = os.getenv("BQ_TABLE", "incidents")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+# --- Config: works both locally (.env) and on Streamlit Cloud (st.secrets) ---
+def get_secret(key, default=None):
+    try:
+        return st.secrets[key]
+    except Exception:
+        return os.getenv(key, default)
+
+PROJECT_ID = get_secret("GCP_PROJECT_ID")
+DATASET_ID = get_secret("BQ_DATASET", "it_ops")
+TABLE_ID = get_secret("BQ_TABLE", "incidents")
+GEMINI_API_KEY = get_secret("GEMINI_API_KEY")
+
+# --- BigQuery client: uses service account from st.secrets on Cloud, ADC locally ---
+def get_bq_client():
+    try:
+        sa_info = dict(st.secrets["gcp_service_account"])
+        credentials = service_account.Credentials.from_service_account_info(
+            sa_info,
+            scopes=["https://www.googleapis.com/auth/cloud-platform"]
+        )
+        return bigquery.Client(project=PROJECT_ID, credentials=credentials)
+    except Exception:
+        return bigquery.Client(project=PROJECT_ID)
 
 genai.configure(api_key=GEMINI_API_KEY)
-gemini_model = genai.GenerativeModel("gemini-2.0-flash")
+gemini_model = genai.GenerativeModel("gemini-1.5-flash")
 
 # --- Page Config ---
 st.set_page_config(
@@ -55,7 +74,7 @@ st.markdown("""
 # --- Data Loading ---
 @st.cache_data(ttl=300)
 def load_data():
-    client = bigquery.Client(project=PROJECT_ID)
+    client = get_bq_client()
     query = f"""
         SELECT * FROM `{PROJECT_ID}.{DATASET_ID}.{TABLE_ID}`
         ORDER BY created_at DESC
@@ -83,7 +102,6 @@ except Exception as e:
     df = pd.DataFrame()
 
 if data_loaded:
-    # Sidebar filters
     st.sidebar.subheader("Filters")
     selected_category = st.sidebar.multiselect(
         "Category", df["category"].unique().tolist(),
@@ -98,7 +116,6 @@ if data_loaded:
         default=df["status"].unique().tolist()
     )
 
-    # Apply filters
     filtered_df = df[
         df["category"].isin(selected_category) &
         df["severity"].isin(selected_severity) &
@@ -122,7 +139,6 @@ with tab1:
     if not data_loaded or filtered_df.empty:
         st.warning("No data available. Check your BigQuery connection.")
     else:
-        # KPI Row
         col1, col2, col3, col4, col5 = st.columns(5)
         total = len(filtered_df)
         critical = len(filtered_df[filtered_df["severity"] == "Critical"])
@@ -138,9 +154,7 @@ with tab1:
 
         st.markdown("---")
 
-        # Row 1: Incidents by Category + Severity Distribution
         col_a, col_b = st.columns(2)
-
         with col_a:
             st.subheader("Incidents by Category")
             cat_counts = filtered_df["category"].value_counts().reset_index()
@@ -160,14 +174,11 @@ with tab1:
             fig.update_layout(height=350)
             st.plotly_chart(fig, use_container_width=True)
 
-        # Row 2: Incidents over time + Resolution time by category
         col_c, col_d = st.columns(2)
-
         with col_c:
             st.subheader("Incident Volume Over Time")
             weekly = filtered_df.groupby("week").size().reset_index(name="count")
-            fig = px.area(weekly, x="week", y="count",
-                          color_discrete_sequence=["#7c3aed"])
+            fig = px.area(weekly, x="week", y="count", color_discrete_sequence=["#7c3aed"])
             fig.update_layout(height=350, xaxis_title="Week", yaxis_title="Incidents")
             st.plotly_chart(fig, use_container_width=True)
 
@@ -186,9 +197,7 @@ with tab1:
             fig.update_layout(height=350)
             st.plotly_chart(fig, use_container_width=True)
 
-        # Row 3: Status breakdown + Affected systems
         col_e, col_f = st.columns(2)
-
         with col_e:
             st.subheader("Status Breakdown")
             status_counts = filtered_df["status"].value_counts().reset_index()
@@ -207,15 +216,10 @@ with tab1:
             fig.update_layout(height=300)
             st.plotly_chart(fig, use_container_width=True)
 
-        # Raw data table
         st.subheader("Incident Log")
         display_cols = ["incident_id", "created_at", "category", "severity", "status",
                         "affected_system", "description", "resolution_time_hours"]
-        st.dataframe(
-            filtered_df[display_cols].head(100),
-            use_container_width=True,
-            hide_index=True
-        )
+        st.dataframe(filtered_df[display_cols].head(100), use_container_width=True, hide_index=True)
 
 
 # ============================================================
@@ -242,14 +246,10 @@ with tab2:
         if enriched_df.empty:
             st.info("No AI-enriched incidents yet. Run `python etl/gemini_enrich.py` to enrich incidents.")
         else:
-            # AI Severity vs Original Severity comparison
             col_a, col_b = st.columns(2)
-
             with col_a:
                 st.subheader("AI vs Original Severity Labels")
-                comparison = enriched_df.groupby(
-                    ["severity", "ai_severity_label"]
-                ).size().reset_index(name="count")
+                comparison = enriched_df.groupby(["severity", "ai_severity_label"]).size().reset_index(name="count")
                 fig = px.sunburst(comparison, path=["severity", "ai_severity_label"],
                                   values="count", color_discrete_sequence=px.colors.qualitative.Bold)
                 fig.update_layout(height=400)
@@ -265,22 +265,12 @@ with tab2:
                 fig.update_layout(height=400)
                 st.plotly_chart(fig, use_container_width=True)
 
-            # Sample enriched incidents
             st.subheader("Sample AI-Enriched Incidents")
-            sample_filter_cat = st.selectbox(
-                "Filter by category",
-                ["All"] + enriched_df["category"].unique().tolist()
-            )
-
-            display_df = enriched_df if sample_filter_cat == "All" else enriched_df[
-                enriched_df["category"] == sample_filter_cat
-            ]
+            sample_filter_cat = st.selectbox("Filter by category", ["All"] + enriched_df["category"].unique().tolist())
+            display_df = enriched_df if sample_filter_cat == "All" else enriched_df[enriched_df["category"] == sample_filter_cat]
 
             for _, row in display_df.head(8).iterrows():
-                sev_color = {
-                    "Critical": "🔴", "High": "🟠", "Medium": "🟡", "Low": "🟢"
-                }.get(row.get("ai_severity_label", ""), "⚪")
-
+                sev_color = {"Critical": "🔴", "High": "🟠", "Medium": "🟡", "Low": "🟢"}.get(row.get("ai_severity_label", ""), "⚪")
                 with st.expander(f"{sev_color} {row['incident_id']} — {row['affected_system']} ({row['category']})"):
                     col1, col2 = st.columns(2)
                     with col1:
@@ -290,7 +280,6 @@ with tab2:
                     with col2:
                         st.markdown(f"**Assigned Team:** {row['assigned_team']}")
                         st.markdown(f"**Resolution Time:** {row['resolution_time_hours']} hrs" if pd.notna(row['resolution_time_hours']) else "**Resolution Time:** Pending")
-
                     st.markdown("**📝 Original Description:**")
                     st.info(row["description"])
                     st.markdown("**🤖 AI Summary:**")
@@ -309,7 +298,6 @@ with tab3:
     if not data_loaded:
         st.warning("No data available.")
     else:
-        # Build context summary for Gemini
         @st.cache_data(ttl=300)
         def build_data_context(_df):
             summary = {
@@ -322,7 +310,6 @@ with tab3:
                 "date_range": f"{_df['created_at'].min().date()} to {_df['created_at'].max().date()}",
                 "open_critical": len(_df[(_df["severity"] == "Critical") & (_df["status"].isin(["Open", "In Progress"]))]),
             }
-            # Include sample of recent incidents
             sample = _df.head(20)[
                 ["incident_id", "category", "severity", "status", "affected_system", "description", "resolution_time_hours"]
             ].to_dict(orient="records")
@@ -330,7 +317,6 @@ with tab3:
 
         data_summary, sample_incidents = build_data_context(df)
 
-        # Example questions
         st.subheader("Example Questions")
         example_cols = st.columns(3)
         examples = [
@@ -347,7 +333,6 @@ with tab3:
 
         st.markdown("---")
 
-        # Q&A Input
         user_question = st.text_input(
             "Ask a question about your IT incident data:",
             value=st.session_state.get("qa_input", ""),
@@ -357,8 +342,8 @@ with tab3:
 
         if st.button("🔍 Ask Gemini", type="primary") and user_question:
             with st.spinner("Analyzing your incident data..."):
-                prompt = f"""You are an expert IT operations analyst. 
-                
+                prompt = f"""You are an expert IT operations analyst.
+
 You have access to an IT incident dataset with the following statistics:
 {data_summary}
 
@@ -368,7 +353,7 @@ Sample of recent incidents:
 Answer this question accurately based on the data provided:
 "{user_question}"
 
-Be concise, specific, and reference actual numbers from the dataset where possible. 
+Be concise, specific, and reference actual numbers from the dataset where possible.
 If the question cannot be answered from the available data, say so clearly."""
 
                 try:
@@ -377,10 +362,6 @@ If the question cannot be answered from the available data, say so clearly."""
                     st.markdown(response.text)
                 except Exception as e:
                     st.error(f"Gemini API error: {e}")
-
-        # Conversation history
-        if "chat_history" not in st.session_state:
-            st.session_state.chat_history = []
 
         st.markdown("---")
         st.subheader("💡 Quick Stats")
