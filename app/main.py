@@ -41,7 +41,7 @@ def get_bq_client():
         return bigquery.Client(project=PROJECT_ID)
 
 genai.configure(api_key=GEMINI_API_KEY)
-gemini_model = genai.GenerativeModel("gemini-1.5-flash")
+gemini_model = genai.GenerativeModel("gemini-2.0-flash")
 
 # --- Page Config ---
 st.set_page_config(
