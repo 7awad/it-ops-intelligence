@@ -65,7 +65,7 @@ Streamlit App (Dashboard + AI Insights + Natural Language Q&A)
 
 ### 1. Clone & Install
 ```bash
-git clone https://github.com/yourusername/it-ops-intelligence
+git clone https://github.com/7awad/it-ops-intelligence
 cd it-ops-intelligence
 python -m venv venv
 venv\Scripts\activate  # Windows
