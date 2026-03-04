@@ -2,7 +2,7 @@
 
 An end-to-end IT incident analytics platform built with **GCP Cloud Storage**, **BigQuery**, **Google Gemini API**, and **Streamlit**. Ingests mock IT operational incident data, enriches it with AI-powered classification and summarization, and surfaces trends through an interactive analytics dashboard.
 
-**Live Demo:** 
+**Live Demo:** https://it-ops-intelligence.streamlit.app/
 **Built by:** Jawad Almatar
 
 ---
@@ -54,7 +54,7 @@ Streamlit App (Dashboard + AI Insights + Natural Language Q&A)
 | Data Generation | Python, Faker |
 | Cloud Storage | GCP Cloud Storage |
 | Data Warehouse | Google BigQuery |
-| AI Enrichment | Google Gemini API (gemini-2.0-flash) |
+| AI Enrichment | Google Gemini API (gemini-2.5-flash) |
 | ETL | Python (pandas, google-cloud) |
 | Dashboard | Streamlit + Plotly |
 | Deployment | Streamlit Community Cloud |
@@ -153,4 +153,4 @@ it-ops-intelligence/
 | Cloud Storage | 5GB / month | ~1MB |
 | BigQuery Storage | 10GB | ~5MB |
 | BigQuery Queries | 1TB / month | <1MB |
-| Gemini API | 15 RPM, 1M TPM | ~200 calls |
+| Gemini API | 5 RPM, 20 RPD | ~200 calls |
