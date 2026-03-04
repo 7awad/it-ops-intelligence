@@ -22,12 +22,13 @@ TABLE_ID = os.getenv("BQ_TABLE", "incidents")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-2.0-flash")  # Free tier model
+model = genai.GenerativeModel("gemini-2.5-flash")
 
-BATCH_SIZE = 50  # Process 50 at a time to respect free tier rate limits
+BATCH_SIZE = 15      # Stay within 20 RPD daily limit
+SLEEP_SECS = 13      # 5 RPM = 1 request per 12s — 13s to stay safe
 
 
-def fetch_unenriched_incidents(client, limit=200):
+def fetch_unenriched_incidents(client, limit=15):
     """Fetch incidents that haven't been AI-enriched yet."""
     query = f"""
         SELECT incident_id, category, severity, affected_system, description, resolution_notes
@@ -71,7 +72,8 @@ def parse_gemini_response(text):
 
 def enrich_batch(df_batch):
     results = []
-    for _, row in df_batch.iterrows():
+    total = len(df_batch)
+    for i, (_, row) in enumerate(df_batch.iterrows()):
         try:
             prompt = build_prompt(row)
             response = model.generate_content(prompt)
@@ -79,9 +81,11 @@ def enrich_batch(df_batch):
             parsed["incident_id"] = row["incident_id"]
             parsed["ai_enriched"] = True
             results.append(parsed)
-            time.sleep(1.2)  # ~50 RPM free tier limit 
+            print(f"  ✅ {i+1}/{total} — {row['incident_id']} enriched")
+            if i < total - 1:  # No sleep after last record
+                time.sleep(SLEEP_SECS)
         except Exception as e:
-            print(f"⚠️  Error on {row['incident_id']}: {e}")
+            print(f"  ⚠️  {row['incident_id']} failed: {e}")
             results.append({
                 "incident_id": row["incident_id"],
                 "ai_severity_label": "Unknown",
@@ -96,12 +100,10 @@ def update_bigquery(client, enriched_df):
     """Update BigQuery rows with AI enrichment results using MERGE."""
     temp_table = f"{PROJECT_ID}.{DATASET_ID}.incidents_temp_enrichment"
 
-    # Load enriched results to a temp table
     job_config = bigquery.LoadJobConfig(write_disposition="WRITE_TRUNCATE")
     job = client.load_table_from_dataframe(enriched_df, temp_table, job_config=job_config)
     job.result()
 
-    # Merge temp into main table
     merge_query = f"""
         MERGE `{PROJECT_ID}.{DATASET_ID}.{TABLE_ID}` T
         USING `{temp_table}` S
@@ -119,21 +121,16 @@ def update_bigquery(client, enriched_df):
 
 def run_enrichment():
     bq_client = bigquery.Client(project=PROJECT_ID)
-    df = fetch_unenriched_incidents(bq_client, limit=200)
+    df = fetch_unenriched_incidents(bq_client, limit=BATCH_SIZE)
 
     if df.empty:
         print("✅ All incidents already enriched.")
         return
 
-    total_batches = (len(df) // BATCH_SIZE) + 1
-    for i in range(0, len(df), BATCH_SIZE):
-        batch = df.iloc[i:i + BATCH_SIZE]
-        batch_num = (i // BATCH_SIZE) + 1
-        print(f"🔄 Processing batch {batch_num}/{total_batches} ({len(batch)} records)...")
-        enriched = enrich_batch(batch)
-        update_bigquery(bq_client, enriched)
-
-    print("✅ Enrichment complete.")
+    print(f"🔄 Enriching {len(df)} incidents (~{len(df) * SLEEP_SECS // 60} min)...")
+    enriched = enrich_batch(df)
+    update_bigquery(bq_client, enriched)
+    print("✅ Enrichment complete. Run again tomorrow for more.")
 
 
 if __name__ == "__main__":

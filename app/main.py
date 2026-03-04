@@ -41,7 +41,7 @@ def get_bq_client():
         return bigquery.Client(project=PROJECT_ID)
 
 genai.configure(api_key=GEMINI_API_KEY)
-gemini_model = genai.GenerativeModel("gemini-2.0-flash")
+gemini_model = genai.GenerativeModel("gemini-2.5-flash")
 
 # --- Page Config ---
 st.set_page_config(
@@ -317,6 +317,25 @@ with tab3:
 
         data_summary, sample_incidents = build_data_context(df)
 
+        # --- Caching wrapper for Gemini calls ---
+        @st.cache_data(ttl=3600)
+        def ask_gemini_cached(question, summary_str, sample_str):
+            prompt = f"""You are an expert IT operations analyst.
+
+You have access to an IT incident dataset with the following statistics:
+{summary_str}
+
+Sample of recent incidents:
+{sample_str}
+
+Answer this question accurately based on the data provided:
+"{question}"
+
+Be concise, specific, and reference actual numbers from the dataset where possible.
+If the question cannot be answered from the available data, say so clearly."""
+            response = gemini_model.generate_content(prompt)
+            return response.text
+
         st.subheader("Example Questions")
         example_cols = st.columns(3)
         examples = [
@@ -333,6 +352,8 @@ with tab3:
 
         st.markdown("---")
 
+        st.caption("💡 Powered by Gemini free tier · identical questions are cached for 1 hour to preserve quota")
+
         user_question = st.text_input(
             "Ask a question about your IT incident data:",
             value=st.session_state.get("qa_input", ""),
@@ -342,24 +363,14 @@ with tab3:
 
         if st.button("🔍 Ask Gemini", type="primary") and user_question:
             with st.spinner("Analyzing your incident data..."):
-                prompt = f"""You are an expert IT operations analyst.
-
-You have access to an IT incident dataset with the following statistics:
-{data_summary}
-
-Sample of recent incidents:
-{sample_incidents[:10]}
-
-Answer this question accurately based on the data provided:
-"{user_question}"
-
-Be concise, specific, and reference actual numbers from the dataset where possible.
-If the question cannot be answered from the available data, say so clearly."""
-
                 try:
-                    response = gemini_model.generate_content(prompt)
+                    answer = ask_gemini_cached(
+                        user_question,
+                        str(data_summary),
+                        str(sample_incidents[:10])
+                    )
                     st.subheader("📊 Answer")
-                    st.markdown(response.text)
+                    st.markdown(answer)
                 except Exception as e:
                     st.error(f"Gemini API error: {e}")
 
